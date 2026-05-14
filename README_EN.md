@@ -1,8 +1,8 @@
-# Choice Announcement Workbench User Guide
+# ChoiceDownloader User Guide
 
 [中文说明](README.md)
 
-Choice Announcement Workbench is a Windows desktop automation tool for batch-downloading U.S. company announcements and annual report files from the Choice financial terminal. It reads company names from Excel, connects to or launches the local Choice client, searches each company, opens the company announcement page, applies the “All Announcements / Financial Reports” filters, runs batch download, and filters downloaded files by filename keywords.
+ChoiceDownloader is a Windows desktop automation tool for batch-downloading company announcements and annual report files from the Choice financial terminal. It reads company names from Excel, connects to or launches the local Choice client, searches each company, opens the company announcement page, applies the “All Announcements / Financial Reports” filters, runs batch download, and filters downloaded files by filename keywords.
 
 The tool is intended for users who already have a valid Choice account, a local Choice installation, and the required data permissions. It does not bypass login, authorization, or platform restrictions, and it does not include the Choice client itself. All files are downloaded through the user’s own locally logged-in Choice terminal.
 
@@ -12,6 +12,7 @@ The tool is intended for users who already have a valid Choice account, a local 
 - Batch company import from Excel through the `公司名称` column.
 - Attach to an existing Choice window, or launch Choice from a configured `.exe` or `.lnk` shortcut.
 - Automate company search, page navigation, F9 switching, announcement-page location, announcement filtering, and batch download.
+- Support coordinate calibration: test key UI targets, capture the current mouse position, and override default coordinates for Hong Kong stocks or different screen layouts.
 - Process a selected Excel row range, such as companies 3 to 20.
 - Configure the number of announcements to download per company and the maximum safety limit for the current run.
 - Configure startup wait, Enter wait, and F9 wait times.
@@ -40,7 +41,7 @@ This tool uses desktop automation, so it is sensitive to UI layout. During a bat
 Download this file from GitHub Releases:
 
 ```text
-ChoiceAnnouncementWorkbench-v0.2.0-windows-x64.exe
+ChoiceDownloader-v0.3.0-windows-x64.exe
 ```
 
 Steps:
@@ -107,6 +108,36 @@ Notes:
 | `跳过导航，假设当前已经在公告页` | Useful for single-company debugging only; not recommended for batch runs. |
 | `跳过下载弹窗里的目录选择步骤` | Use only when the Choice download dialog already keeps the correct target directory. |
 | `最后一家公司完成后返回首页` | Return to the Choice home page after the last company is processed. |
+
+## Coordinate Calibration
+
+Choice UI positions may vary by market, terminal version, resolution, scaling, or window layout. The GUI now includes a coordinate calibration panel. By default, the tool still uses the original coordinates from the U.S. stock workflow. For Hong Kong stocks, you can adjust only the targets that differ.
+
+Available calibration targets:
+
+| Target | Purpose |
+| --- | --- |
+| `左侧导航滚动点` | Scroll point in the left navigation area after F9. |
+| `公司公告入口` | Company announcement entry in the left navigation area. For Hong Kong stocks, adjust this first if the entry is in a different position. |
+| `全部公告筛选` | The “All Announcements” filter on the announcement page. |
+| `财务报告筛选` | The “Financial Reports” filter. |
+| `批量下载按钮` | Batch download button on the announcement list page. |
+| `弹窗浏览按钮` | Browse button in the batch download dialog. |
+| `弹窗范围勾选` | Range checkbox in the batch download dialog. |
+| `弹窗篇数输入` | Download-count input in the batch download dialog. |
+| `弹窗下载按钮` | Confirm download button in the batch download dialog. |
+| `返回首页按钮` | Return-home entry in Choice. |
+
+Recommended calibration workflow:
+
+1. Fill in the Excel file, Choice entry path, log directory, and wait times.
+2. Select a target under “测试定位点”, such as `公司公告入口`.
+3. Click “执行到此处并移动鼠标”. The tool uses the first company in the selected range, runs to that step, moves the mouse to the target, and stops before download.
+4. If the mouse is not on the correct UI element, edit X/Y manually, or move the mouse to the correct position and click “取鼠标” in that row.
+5. Click “确认” in the same row. The current run will use the coordinates shown in the GUI.
+6. For Hong Kong stocks, test `公司公告入口` first. If later filters or dialog buttons differ, calibrate those targets one by one.
+
+Coordinates are relative to the top-left corner of the Choice window. For batch runs, keep the Choice window maximized and avoid changing display scaling, resolution, or window position during automation.
 
 ## Filename Filtering
 
@@ -208,19 +239,19 @@ pyinstaller choice_announcement_workbench.spec
 The executable will be generated at:
 
 ```text
-dist\choice_announcement_workbench.exe
+dist\ChoiceDownloader.exe
 ```
 
 Recommended GitHub Releases asset name:
 
 ```text
-ChoiceAnnouncementWorkbench-v0.2.0-windows-x64.exe
+ChoiceDownloader-v0.3.0-windows-x64.exe
 ```
 
 ## Project Structure
 
 ```text
-ChoiceAnnouncementWorkbench\
+ChoiceDownloader\
   scripts\
     choice_automation.py          # Core Choice automation workflow
     choice_automation_gui.py      # Tkinter GUI
@@ -228,7 +259,7 @@ ChoiceAnnouncementWorkbench\
     company_list_template.xlsx    # Company list import template
     README.md                     # Template notes
   release\
-    ChoiceAnnouncementWorkbench-v0.2.0-windows-x64.exe
+    ChoiceDownloader-v0.3.0-windows-x64.exe
   choice_announcement_workbench.spec
   requirements.txt
   README.md

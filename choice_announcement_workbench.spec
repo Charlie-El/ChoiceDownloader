@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='choice_announcement_workbench',
+    name='ChoiceDownloader',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

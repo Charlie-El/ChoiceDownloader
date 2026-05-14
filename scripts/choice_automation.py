@@ -23,16 +23,31 @@ GUI_WINDOW_EXCLUDE_HINTS = ("公告下载助手", "announcement_workbench", "vis
 MAX_BATCH_DOWNLOAD_COUNT = 5
 DEFAULT_MAX_BATCH_DOWNLOAD_COUNT = 100
 
-LEFT_NAV_SCROLL_POINT = (250, 980)
-LEFT_NAV_COMPANY_ANNOUNCEMENT_POINT = (150, 1442)
-ALL_ANNOUNCEMENTS_POINT = (900, 360)
-FINANCIAL_REPORT_POINT = (900, 470)
-ANNOUNCEMENT_BATCH_BUTTON_POINT = (2300, 370)
-POPUP_BATCH_BROWSE_BUTTON_POINT = (1532, 780)
-POPUP_BATCH_RANGE_CHECKBOX_POINT = (1070, 940)
-POPUP_BATCH_RANGE_INPUT_POINT = (1340, 930)
-POPUP_BATCH_DOWNLOAD_BUTTON_POINT = (1530, 990)
-RETURN_HOME_POINT = (110, 118)
+COORDINATE_DEFAULTS = {
+    "left_nav_scroll": (250, 980),
+    "company_announcement": (150, 1442),
+    "all_announcements": (900, 360),
+    "financial_report": (900, 470),
+    "batch_download": (2300, 370),
+    "popup_browse": (1532, 780),
+    "popup_range_checkbox": (1070, 940),
+    "popup_range_input": (1340, 930),
+    "popup_download": (1530, 990),
+    "return_home": (110, 118),
+}
+
+CALIBRATION_TARGET_CHOICES = tuple(COORDINATE_DEFAULTS.keys())
+
+LEFT_NAV_SCROLL_POINT = COORDINATE_DEFAULTS["left_nav_scroll"]
+LEFT_NAV_COMPANY_ANNOUNCEMENT_POINT = COORDINATE_DEFAULTS["company_announcement"]
+ALL_ANNOUNCEMENTS_POINT = COORDINATE_DEFAULTS["all_announcements"]
+FINANCIAL_REPORT_POINT = COORDINATE_DEFAULTS["financial_report"]
+ANNOUNCEMENT_BATCH_BUTTON_POINT = COORDINATE_DEFAULTS["batch_download"]
+POPUP_BATCH_BROWSE_BUTTON_POINT = COORDINATE_DEFAULTS["popup_browse"]
+POPUP_BATCH_RANGE_CHECKBOX_POINT = COORDINATE_DEFAULTS["popup_range_checkbox"]
+POPUP_BATCH_RANGE_INPUT_POINT = COORDINATE_DEFAULTS["popup_range_input"]
+POPUP_BATCH_DOWNLOAD_BUTTON_POINT = COORDINATE_DEFAULTS["popup_download"]
+RETURN_HOME_POINT = COORDINATE_DEFAULTS["return_home"]
 
 
 class StopRequestedError(RuntimeError):
@@ -86,6 +101,33 @@ def controlled_sleep(seconds: float, stop_event=None, interval: float = 0.1):
         check_stop(stop_event)
         time.sleep(min(interval, end_time - time.time()))
     check_stop(stop_event)
+
+
+def parse_coordinate_overrides(raw_items: list[str] | None) -> dict[str, tuple[int, int]]:
+    overrides: dict[str, tuple[int, int]] = {}
+    for raw_item in raw_items or []:
+        if "=" not in raw_item:
+            raise ValueError(f"Coordinate override must be name=x,y: {raw_item}")
+        name, raw_point = raw_item.split("=", 1)
+        name = name.strip()
+        if name not in COORDINATE_DEFAULTS:
+            raise ValueError(f"Unknown coordinate target: {name}")
+        parts = [part.strip() for part in raw_point.split(",")]
+        if len(parts) != 2:
+            raise ValueError(f"Coordinate override must be name=x,y: {raw_item}")
+        try:
+            x = int(parts[0])
+            y = int(parts[1])
+        except ValueError as exc:
+            raise ValueError(f"Coordinate values must be integers: {raw_item}") from exc
+        overrides[name] = (x, y)
+    return overrides
+
+
+def get_coordinate(name: str, coordinate_overrides: dict[str, tuple[int, int]] | None = None) -> tuple[int, int]:
+    if coordinate_overrides and name in coordinate_overrides:
+        return coordinate_overrides[name]
+    return COORDINATE_DEFAULTS[name]
 
 
 def ensure_safe_report_name(report_name: str, whitelist: set[str]):
@@ -274,13 +316,26 @@ def scroll_window_relative_point(window, point: tuple[int, int], wheel_dist: int
     logging.info("scrolled %s at relative=%s absolute=(%s, %s) wheel=%s", step_name, point, x, y, wheel_dist)
 
 
-def scroll_left_nav_to_bottom(window, stop_event=None):
+def scroll_left_nav_to_bottom(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
     for index in range(4):
-        scroll_window_relative_point(window, LEFT_NAV_SCROLL_POINT, -14, f"left_nav_down_{index + 1}", stop_event=stop_event)
+        scroll_window_relative_point(
+            window,
+            get_coordinate("left_nav_scroll", coordinate_overrides),
+            -14,
+            f"left_nav_down_{index + 1}",
+            stop_event=stop_event,
+        )
         controlled_sleep(0.4, stop_event)
 
 
-def open_company_announcement(window, report_name: str, enter_wait_seconds: float, post_f9_wait_seconds: float, stop_event=None):
+def open_company_announcement(
+    window,
+    report_name: str,
+    enter_wait_seconds: float,
+    post_f9_wait_seconds: float,
+    stop_event=None,
+    coordinate_overrides: dict[str, tuple[int, int]] | None = None,
+):
     input_bottom_search(window, report_name, stop_event=stop_event)
     controlled_sleep(1.0, stop_event)
     logging.info("waited 1.0 second after typing company name before pressing Enter")
@@ -288,26 +343,148 @@ def open_company_announcement(window, report_name: str, enter_wait_seconds: floa
     controlled_sleep(enter_wait_seconds, stop_event)
     send_f9(window, stop_event=stop_event)
     controlled_sleep(post_f9_wait_seconds, stop_event)
-    scroll_left_nav_to_bottom(window, stop_event=stop_event)
+    scroll_left_nav_to_bottom(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
     controlled_sleep(0.8, stop_event)
-    click_window_relative_point(window, LEFT_NAV_COMPANY_ANNOUNCEMENT_POINT, "company_announcement", stop_event=stop_event)
+    click_window_relative_point(
+        window,
+        get_coordinate("company_announcement", coordinate_overrides),
+        "company_announcement",
+        stop_event=stop_event,
+    )
     controlled_sleep(3.2, stop_event)
     logging.info("waited 3.2 seconds before all announcements filter")
 
 
-def click_all_announcements(window, stop_event=None):
-    click_window_relative_point(window, ALL_ANNOUNCEMENTS_POINT, "all_announcements", stop_event=stop_event)
+def click_all_announcements(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
+    click_window_relative_point(
+        window,
+        get_coordinate("all_announcements", coordinate_overrides),
+        "all_announcements",
+        stop_event=stop_event,
+    )
     controlled_sleep(1.0, stop_event)
 
 
-def click_financial_report(window, stop_event=None):
-    click_window_relative_point(window, FINANCIAL_REPORT_POINT, "financial_report", stop_event=stop_event)
+def click_financial_report(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
+    click_window_relative_point(
+        window,
+        get_coordinate("financial_report", coordinate_overrides),
+        "financial_report",
+        stop_event=stop_event,
+    )
     controlled_sleep(1.2, stop_event)
 
 
-def open_financial_reports(window, stop_event=None):
-    click_all_announcements(window, stop_event=stop_event)
-    click_financial_report(window, stop_event=stop_event)
+def open_financial_reports(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
+    click_all_announcements(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
+    click_financial_report(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
+
+
+def move_to_calibration_target(
+    window,
+    target_name: str,
+    report_name: str,
+    enter_wait_seconds: float,
+    post_f9_wait_seconds: float,
+    stop_event=None,
+    coordinate_overrides: dict[str, tuple[int, int]] | None = None,
+):
+    if target_name not in COORDINATE_DEFAULTS:
+        raise ValueError(f"Unknown calibration target: {target_name}")
+
+    if target_name == "return_home":
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate("return_home", coordinate_overrides),
+            "calibrate_return_home",
+            stop_event=stop_event,
+        )
+        return
+
+    input_bottom_search(window, report_name, stop_event=stop_event)
+    controlled_sleep(1.0, stop_event)
+    logging.info("waited 1.0 second after typing company name before pressing Enter")
+    submit_search_with_enter(window, stop_event=stop_event)
+    controlled_sleep(enter_wait_seconds, stop_event)
+    send_f9(window, stop_event=stop_event)
+    controlled_sleep(post_f9_wait_seconds, stop_event)
+
+    if target_name == "left_nav_scroll":
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate("left_nav_scroll", coordinate_overrides),
+            "calibrate_left_nav_scroll",
+            stop_event=stop_event,
+        )
+        return
+
+    scroll_left_nav_to_bottom(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
+    controlled_sleep(0.8, stop_event)
+    if target_name == "company_announcement":
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate("company_announcement", coordinate_overrides),
+            "calibrate_company_announcement",
+            stop_event=stop_event,
+        )
+        return
+
+    click_window_relative_point(
+        window,
+        get_coordinate("company_announcement", coordinate_overrides),
+        "company_announcement",
+        stop_event=stop_event,
+    )
+    controlled_sleep(3.2, stop_event)
+    logging.info("waited 3.2 seconds before all announcements filter")
+
+    if target_name == "all_announcements":
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate("all_announcements", coordinate_overrides),
+            "calibrate_all_announcements",
+            stop_event=stop_event,
+        )
+        return
+
+    click_all_announcements(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
+    if target_name == "financial_report":
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate("financial_report", coordinate_overrides),
+            "calibrate_financial_report",
+            stop_event=stop_event,
+        )
+        return
+
+    click_financial_report(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
+    if target_name == "batch_download":
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate("batch_download", coordinate_overrides),
+            "calibrate_batch_download",
+            stop_event=stop_event,
+        )
+        return
+
+    popup_targets = {"popup_browse", "popup_range_checkbox", "popup_range_input", "popup_download"}
+    if target_name in popup_targets:
+        click_window_relative_point(
+            window,
+            get_coordinate("batch_download", coordinate_overrides),
+            "batch_download_button",
+            stop_event=stop_event,
+        )
+        controlled_sleep(1.2, stop_event)
+        move_mouse_to_window_relative_point(
+            window,
+            get_coordinate(target_name, coordinate_overrides),
+            f"calibrate_{target_name}",
+            stop_event=stop_event,
+        )
+        return
+
+    raise ValueError(f"Unsupported calibration target: {target_name}")
 
 
 def select_folder_with_dialog(path: Path):
@@ -371,12 +548,18 @@ def configure_batch_download_dialog(
     batch_count: int,
     skip_folder_dialog: bool = False,
     stop_event=None,
+    coordinate_overrides: dict[str, tuple[int, int]] | None = None,
 ):
     controlled_sleep(1.2, stop_event)
     if skip_folder_dialog:
         logging.info("skipped folder dialog handling by option")
     else:
-        click_window_relative_point(window, POPUP_BATCH_BROWSE_BUTTON_POINT, "batch_browse_button", stop_event=stop_event)
+        click_window_relative_point(
+            window,
+            get_coordinate("popup_browse", coordinate_overrides),
+            "batch_browse_button",
+            stop_event=stop_event,
+        )
         try:
             select_folder_with_dialog_retry(download_root, stop_event=stop_event)
         except RuntimeError as exc:
@@ -384,9 +567,19 @@ def configure_batch_download_dialog(
             if "浏览文件夹" in message or "Dialog with keyword" in message:
                 raise CompanyNotFoundError("没有找到公司：未找到“浏览文件夹”弹窗，可能没有进入正确的公司公告下载页面。") from exc
             raise
-    click_window_relative_point(window, POPUP_BATCH_RANGE_CHECKBOX_POINT, "batch_range_checkbox", stop_event=stop_event)
+    click_window_relative_point(
+        window,
+        get_coordinate("popup_range_checkbox", coordinate_overrides),
+        "batch_range_checkbox",
+        stop_event=stop_event,
+    )
     controlled_sleep(0.2, stop_event)
-    click_window_relative_point(window, POPUP_BATCH_RANGE_INPUT_POINT, "batch_range_input", stop_event=stop_event)
+    click_window_relative_point(
+        window,
+        get_coordinate("popup_range_input", coordinate_overrides),
+        "batch_range_input",
+        stop_event=stop_event,
+    )
     controlled_sleep(0.2, stop_event)
     send_keys("{RIGHT}{RIGHT}{RIGHT}")
     controlled_sleep(0.1, stop_event)
@@ -394,7 +587,12 @@ def configure_batch_download_dialog(
     controlled_sleep(0.1, stop_event)
     send_keys(str(batch_count))
     logging.info("set batch range count: %s", batch_count)
-    click_window_relative_point(window, POPUP_BATCH_DOWNLOAD_BUTTON_POINT, "batch_download_confirm", stop_event=stop_event)
+    click_window_relative_point(
+        window,
+        get_coordinate("popup_download", coordinate_overrides),
+        "batch_download_confirm",
+        stop_event=stop_event,
+    )
     logging.info("submitted batch download dialog")
 
 
@@ -404,14 +602,21 @@ def click_batch_download(
     batch_count: int,
     skip_folder_dialog: bool = False,
     stop_event=None,
+    coordinate_overrides: dict[str, tuple[int, int]] | None = None,
 ):
-    click_window_relative_point(window, ANNOUNCEMENT_BATCH_BUTTON_POINT, "batch_download_button", stop_event=stop_event)
+    click_window_relative_point(
+        window,
+        get_coordinate("batch_download", coordinate_overrides),
+        "batch_download_button",
+        stop_event=stop_event,
+    )
     configure_batch_download_dialog(
         window,
         download_root,
         batch_count,
         skip_folder_dialog=skip_folder_dialog,
         stop_event=stop_event,
+        coordinate_overrides=coordinate_overrides,
     )
 
 
@@ -558,26 +763,34 @@ def copy_latest_file_to_latest_folder(
     return copied_targets
 
 
-def get_popup_batch_target_point(target_name: str) -> tuple[int, int]:
+def get_popup_batch_target_point(
+    target_name: str,
+    coordinate_overrides: dict[str, tuple[int, int]] | None = None,
+) -> tuple[int, int]:
     mapping = {
-        "browse": POPUP_BATCH_BROWSE_BUTTON_POINT,
-        "range_checkbox": POPUP_BATCH_RANGE_CHECKBOX_POINT,
-        "range_input": POPUP_BATCH_RANGE_INPUT_POINT,
-        "download": POPUP_BATCH_DOWNLOAD_BUTTON_POINT,
+        "browse": "popup_browse",
+        "range_checkbox": "popup_range_checkbox",
+        "range_input": "popup_range_input",
+        "download": "popup_download",
     }
     if target_name not in mapping:
         raise ValueError(f"unknown popup target: {target_name}")
-    return mapping[target_name]
+    return get_coordinate(mapping[target_name], coordinate_overrides)
 
 
-def return_to_homepage(window, stop_event=None):
-    click_window_relative_point(window, RETURN_HOME_POINT, "return_home", stop_event=stop_event)
+def return_to_homepage(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
+    click_window_relative_point(
+        window,
+        get_coordinate("return_home", coordinate_overrides),
+        "return_home",
+        stop_event=stop_event,
+    )
     controlled_sleep(1.0, stop_event)
 
 
-def try_return_to_homepage(window, stop_event=None):
+def try_return_to_homepage(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
     try:
-        return_to_homepage(window, stop_event=stop_event)
+        return_to_homepage(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
     except Exception as exc:
         logging.warning("failed to return homepage after error: %s", exc)
 
@@ -701,6 +914,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep all keyword-matching files instead of only the newest dated file.",
     )
+    parser.add_argument(
+        "--coordinate",
+        action="append",
+        dest="coordinates",
+        help="Override a relative click target as name=x,y. Can be repeated.",
+    )
+    parser.add_argument(
+        "--calibrate-target",
+        choices=CALIBRATION_TARGET_CHOICES,
+        help="Move the mouse to the selected target and stop before performing business actions.",
+    )
     return parser
 
 
@@ -709,23 +933,26 @@ def parse_args(argv: list[str] | None = None):
 
 
 def run_with_args(args, extra_log_handlers: list[logging.Handler] | None = None, stop_event=None):
+    is_calibration_run = bool(getattr(args, "calibrate_target", None))
     if not str(args.exe or "").strip():
         return fail_safe("Choice executable path is required.")
     if not str(args.report_name or "").strip():
         return fail_safe("Company name is required.")
-    if not str(args.base_dir or "").strip():
+    if not is_calibration_run and not str(args.base_dir or "").strip():
         return fail_safe("Download directory is required.")
     if not str(args.log_dir or "").strip():
         return fail_safe("Log directory is required.")
     whitelist = set(args.allowed_reports or [args.report_name])
-    base_dir = Path(args.base_dir)
+    base_dir = Path(args.base_dir) if str(args.base_dir or "").strip() else Path.cwd()
     log_dir = Path(args.log_dir)
     setup_logging(log_dir, extra_handlers=extra_log_handlers)
 
     try:
+        coordinate_overrides = parse_coordinate_overrides(getattr(args, "coordinates", None))
         ensure_safe_report_name(args.report_name, whitelist)
-        ensure_download_count(args.batch_count, args.max_batch_count)
-        base_dir.mkdir(parents=True, exist_ok=True)
+        if not is_calibration_run:
+            ensure_download_count(args.batch_count, args.max_batch_count)
+            base_dir.mkdir(parents=True, exist_ok=True)
         remove_evidence_dir(Path.cwd())
     except Exception as exc:
         return fail_safe(str(exc))
@@ -737,6 +964,20 @@ def run_with_args(args, extra_log_handlers: list[logging.Handler] | None = None,
         return fail_safe(str(exc))
 
     try:
+        calibrate_target = getattr(args, "calibrate_target", None)
+        if calibrate_target:
+            move_to_calibration_target(
+                window,
+                calibrate_target,
+                args.report_name,
+                enter_wait_seconds=args.enter_wait_seconds,
+                post_f9_wait_seconds=args.post_f9_wait_seconds,
+                stop_event=stop_event,
+                coordinate_overrides=coordinate_overrides,
+            )
+            logging.info("calibration target reached: %s", calibrate_target)
+            return 0
+
         if not args.skip_navigation:
             open_company_announcement(
                 window,
@@ -744,25 +985,36 @@ def run_with_args(args, extra_log_handlers: list[logging.Handler] | None = None,
                 enter_wait_seconds=args.enter_wait_seconds,
                 post_f9_wait_seconds=args.post_f9_wait_seconds,
                 stop_event=stop_event,
+                coordinate_overrides=coordinate_overrides,
             )
         if args.navigation_only:
             logging.info("navigation-only mode finished")
             return 0
         if args.show_batch_target:
-            move_mouse_to_window_relative_point(window, ANNOUNCEMENT_BATCH_BUTTON_POINT, "batch_download_target", stop_event=stop_event)
+            move_mouse_to_window_relative_point(
+                window,
+                get_coordinate("batch_download", coordinate_overrides),
+                "batch_download_target",
+                stop_event=stop_event,
+            )
             input("Mouse moved to batch download target. Adjust the coordinate if needed, then press Enter to continue...")
         if args.pause_before_batch:
             logging.info("paused before batch download click; inspect the UI and press Enter to continue")
             input("Paused before batch download. Press Enter to continue...")
 
-        open_financial_reports(window, stop_event=stop_event)
+        open_financial_reports(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
 
         before_paths = {path for path in base_dir.rglob("*") if path.is_file()}
 
         if args.pause_after_batch_click or args.show_popup_batch_target:
-            click_window_relative_point(window, ANNOUNCEMENT_BATCH_BUTTON_POINT, "batch_download_button", stop_event=stop_event)
+            click_window_relative_point(
+                window,
+                get_coordinate("batch_download", coordinate_overrides),
+                "batch_download_button",
+                stop_event=stop_event,
+            )
             if args.show_popup_batch_target:
-                target_point = get_popup_batch_target_point(args.show_popup_batch_target)
+                target_point = get_popup_batch_target_point(args.show_popup_batch_target, coordinate_overrides)
                 move_mouse_to_window_relative_point(
                     window,
                     target_point,
@@ -775,9 +1027,23 @@ def run_with_args(args, extra_log_handlers: list[logging.Handler] | None = None,
                 )
             if args.pause_after_batch_click:
                 input("Paused after batch download click. Inspect the result, then press Enter to continue...")
-            configure_batch_download_dialog(window, base_dir, args.batch_count, args.skip_folder_dialog, stop_event=stop_event)
+            configure_batch_download_dialog(
+                window,
+                base_dir,
+                args.batch_count,
+                args.skip_folder_dialog,
+                stop_event=stop_event,
+                coordinate_overrides=coordinate_overrides,
+            )
         else:
-            click_batch_download(window, base_dir, args.batch_count, args.skip_folder_dialog, stop_event=stop_event)
+            click_batch_download(
+                window,
+                base_dir,
+                args.batch_count,
+                args.skip_folder_dialog,
+                stop_event=stop_event,
+                coordinate_overrides=coordinate_overrides,
+            )
 
         downloaded_paths = wait_for_batch_files(base_dir, before_paths, args.batch_count, stop_event=stop_event)
         copy_latest_file_to_latest_folder(
@@ -788,18 +1054,23 @@ def run_with_args(args, extra_log_handlers: list[logging.Handler] | None = None,
         )
 
         if args.show_return_home_target:
-            move_mouse_to_window_relative_point(window, RETURN_HOME_POINT, "return_home_target", stop_event=stop_event)
+            move_mouse_to_window_relative_point(
+                window,
+                get_coordinate("return_home", coordinate_overrides),
+                "return_home_target",
+                stop_event=stop_event,
+            )
             input("Mouse moved to return-home target. Adjust the coordinate if needed, then press Enter to continue...")
         if args.pause_before_return_home and not args.skip_return_home:
             input("Paused before returning home. Press Enter to continue...")
         if not args.skip_return_home:
-            return_to_homepage(window, stop_event=stop_event)
+            return_to_homepage(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
     except StopRequestedError as exc:
         return fail_safe(str(exc))
     except Exception as exc:
         try:
             if "window" in locals() and window is not None and not getattr(args, "skip_return_home", False):
-                try_return_to_homepage(window, stop_event=stop_event)
+                try_return_to_homepage(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
         except StopRequestedError:
             return fail_safe("Run stopped by user.")
         return fail_safe(f"automation failed: {exc}")

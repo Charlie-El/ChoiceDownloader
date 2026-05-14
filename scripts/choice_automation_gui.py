@@ -1,3 +1,5 @@
+import ctypes
+import ctypes.wintypes
 import logging
 import queue
 import subprocess
@@ -22,13 +24,26 @@ def get_app_dir() -> Path:
 
 APP_DIR = get_app_dir()
 SETTINGS_PATH = APP_DIR / "choice_automation_gui_settings.json"
-ERROR_LOG_PATH = Path(tempfile.gettempdir()) / "choice_announcement_workbench_gui_error.log"
+ERROR_LOG_PATH = Path(tempfile.gettempdir()) / "choice_downloader_gui_error.log"
 DEFAULT_BROWSE_DIR = Path.home() if Path.home().exists() else APP_DIR
 KEYWORD_MATCH_MODE_LABELS = {
     "满足任一关键词": "or",
     "满足全部关键词": "and",
 }
 KEYWORD_MATCH_MODE_VALUES = list(KEYWORD_MATCH_MODE_LABELS.keys())
+COORDINATE_TARGET_LABELS = [
+    ("left_nav_scroll", "左侧导航滚动点"),
+    ("company_announcement", "公司公告入口"),
+    ("all_announcements", "全部公告筛选"),
+    ("financial_report", "财务报告筛选"),
+    ("batch_download", "批量下载按钮"),
+    ("popup_browse", "弹窗浏览按钮"),
+    ("popup_range_checkbox", "弹窗范围勾选"),
+    ("popup_range_input", "弹窗篇数输入"),
+    ("popup_download", "弹窗下载按钮"),
+    ("return_home", "返回首页按钮"),
+]
+COORDINATE_LABEL_BY_NAME = dict(COORDINATE_TARGET_LABELS)
 
 
 class QueueLogHandler(logging.Handler):
@@ -53,7 +68,9 @@ class AutomationGui:
 
         self.output_queue: queue.Queue = queue.Queue()
         self.worker_thread: threading.Thread | None = None
+        self.calibration_thread: threading.Thread | None = None
         self.is_running = False
+        self.is_calibrating = False
         self.stop_requested = False
         self.stop_event = threading.Event()
         self.log_handler = QueueLogHandler(self.output_queue)
@@ -76,6 +93,12 @@ class AutomationGui:
         self.skip_navigation_var = tk.BooleanVar(value=False)
         self.skip_folder_dialog_var = tk.BooleanVar(value=False)
         self.return_home_var = tk.BooleanVar(value=True)
+        self.coordinate_vars: dict[str, tuple[tk.StringVar, tk.StringVar]] = {}
+        self.confirmed_coordinates = dict(choice_automation.COORDINATE_DEFAULTS)
+        for target_name, _label in COORDINATE_TARGET_LABELS:
+            default_x, default_y = choice_automation.COORDINATE_DEFAULTS[target_name]
+            self.coordinate_vars[target_name] = (tk.StringVar(value=str(default_x)), tk.StringVar(value=str(default_y)))
+        self.calibration_target_var = tk.StringVar(value=COORDINATE_TARGET_LABELS[1][1])
 
         self.status_var = tk.StringVar(value="就绪")
         self.summary_var = tk.StringVar(value="请填写本机路径和运行参数。程序不会预置或保存用户目录、公司名单和筛选条件。")
@@ -278,8 +301,14 @@ class AutomationGui:
             justify="left",
         ).grid(row=4, column=0, sticky="w", pady=(12, 0))
 
+        coordinate_card = ttk.LabelFrame(right, text="坐标校准", style="Card.TLabelframe")
+        coordinate_card.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        coordinate_card.columnconfigure(0, weight=1)
+
+        self._build_coordinate_panel(coordinate_card)
+
         actions = ttk.LabelFrame(right, text="执行", style="Card.TLabelframe")
-        actions.grid(row=1, column=0, sticky="new", pady=(10, 0))
+        actions.grid(row=2, column=0, sticky="new", pady=(10, 0))
         actions.columnconfigure(0, weight=1)
 
         self.start_button = ttk.Button(actions, text="开始批量运行", command=self.start_run)
@@ -361,6 +390,58 @@ class AutomationGui:
         ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=(10, 10), pady=8)
         if command and button_text:
             ttk.Button(parent, text=button_text, command=command).grid(row=row, column=2, sticky="ew", pady=8)
+
+    def _build_coordinate_panel(self, parent):
+        parent.columnconfigure(0, weight=1)
+        ttk.Label(
+            parent,
+            text="默认使用内置坐标。港股或不同分辨率下，可先测试鼠标位置，再填入新坐标并确认。",
+            style="Subtle.TLabel",
+            wraplength=620,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        table = ttk.Frame(parent)
+        table.grid(row=1, column=0, sticky="ew")
+        table.columnconfigure(1, weight=1)
+        ttk.Label(table, text="定位点").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(table, text="X").grid(row=0, column=1, sticky="w", pady=(0, 4))
+        ttk.Label(table, text="Y").grid(row=0, column=2, sticky="w", pady=(0, 4))
+        ttk.Label(table, text="操作").grid(row=0, column=3, sticky="w", pady=(0, 4))
+
+        for row_index, (target_name, label) in enumerate(COORDINATE_TARGET_LABELS, start=1):
+            x_var, y_var = self.coordinate_vars[target_name]
+            ttk.Label(table, text=label).grid(row=row_index, column=0, sticky="w", pady=3)
+            ttk.Entry(table, textvariable=x_var, width=8).grid(row=row_index, column=1, sticky="w", padx=(8, 6), pady=3)
+            ttk.Entry(table, textvariable=y_var, width=8).grid(row=row_index, column=2, sticky="w", padx=(0, 8), pady=3)
+            row_actions = ttk.Frame(table)
+            row_actions.grid(row=row_index, column=3, sticky="w", pady=3)
+            ttk.Button(
+                row_actions,
+                text="确认",
+                width=7,
+                command=lambda name=target_name: self.confirm_coordinate(name),
+            ).grid(row=0, column=0, sticky="w")
+            ttk.Button(
+                row_actions,
+                text="取鼠标",
+                width=8,
+                command=lambda name=target_name: self.capture_mouse_coordinate(name),
+            ).grid(row=0, column=1, sticky="w", padx=(6, 0))
+
+        test_bar = ttk.Frame(parent)
+        test_bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        test_bar.columnconfigure(1, weight=1)
+        ttk.Label(test_bar, text="测试定位点").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(
+            test_bar,
+            textvariable=self.calibration_target_var,
+            values=[label for _name, label in COORDINATE_TARGET_LABELS],
+            state="readonly",
+            width=18,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 8))
+        self.calibration_button = ttk.Button(test_bar, text="执行到此处并移动鼠标", command=self.start_coordinate_calibration)
+        self.calibration_button.grid(row=0, column=2, sticky="e")
 
     def _choose_excel_file(self):
         selected = filedialog.askopenfilename(
@@ -452,6 +533,79 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             )
         except Exception:
             pass
+
+    def _target_name_from_label(self, label: str) -> str:
+        for target_name, target_label in COORDINATE_TARGET_LABELS:
+            if label == target_label:
+                return target_name
+        return COORDINATE_TARGET_LABELS[0][0]
+
+    def _collect_coordinate_overrides(self) -> dict[str, tuple[int, int]]:
+        overrides: dict[str, tuple[int, int]] = {}
+        for target_name, _label in COORDINATE_TARGET_LABELS:
+            x_var, y_var = self.coordinate_vars[target_name]
+            raw_x = x_var.get().strip()
+            raw_y = y_var.get().strip()
+            if not raw_x or not raw_y:
+                raise ValueError(f"请填写坐标：{target_name}")
+            try:
+                point = (int(raw_x), int(raw_y))
+            except ValueError as exc:
+                raise ValueError(f"坐标必须是整数：{target_name}") from exc
+            if point != self.confirmed_coordinates[target_name]:
+                label = COORDINATE_LABEL_BY_NAME.get(target_name, target_name)
+                raise ValueError(f"{label} 坐标已修改，请点击该行“确认”后再运行或测试。")
+            default_point = choice_automation.COORDINATE_DEFAULTS[target_name]
+            if point != default_point:
+                overrides[target_name] = point
+        return overrides
+
+    def _build_coordinate_args(self, coordinate_overrides: dict[str, tuple[int, int]]) -> list[str]:
+        args: list[str] = []
+        for name, point in coordinate_overrides.items():
+            args.extend(["--coordinate", f"{name}={point[0]},{point[1]}"])
+        return args
+
+    def confirm_coordinate(self, target_name: str):
+        try:
+            x_var, y_var = self.coordinate_vars[target_name]
+            x_value = int(x_var.get().strip())
+            y_value = int(y_var.get().strip())
+        except Exception:
+            messagebox.showerror("坐标错误", "坐标必须填写为整数。")
+            return
+        self.confirmed_coordinates[target_name] = (x_value, y_value)
+        label = COORDINATE_LABEL_BY_NAME.get(target_name, target_name)
+        self._append_log(f"[GUI] 已确认坐标 {label}=({x_value}, {y_value})，后续运行将按当前坐标执行\n")
+
+    def capture_mouse_coordinate(self, target_name: str):
+        if self.is_running or self.is_calibrating:
+            messagebox.showinfo("任务进行中", "任务运行或校准时不能读取鼠标坐标。")
+            return
+        choice_exe = self.choice_exe_var.get().strip()
+        if not choice_exe:
+            messagebox.showerror("参数错误", "请先填写 Choice 程序路径，用于连接 Choice 窗口。")
+            return
+        self._append_log(f"[GUI] 3 秒内请把鼠标移动到目标位置：{target_name}\n")
+        self.root.after(3000, lambda: self._capture_mouse_coordinate_now(target_name, choice_exe))
+
+    def _capture_mouse_coordinate_now(self, target_name: str, choice_exe: str):
+        if self.is_running or self.is_calibrating:
+            return
+        try:
+            window = choice_automation.launch_or_connect(Path(choice_exe))
+            rect = window.rectangle()
+            cursor_point = ctypes.wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor_point))
+            relative_x = cursor_point.x - rect.left
+            relative_y = cursor_point.y - rect.top
+            x_var, y_var = self.coordinate_vars[target_name]
+            x_var.set(str(relative_x))
+            y_var.set(str(relative_y))
+            self._append_log(f"[GUI] 已读取鼠标坐标 {target_name}=({relative_x}, {relative_y})\n")
+        except Exception as exc:
+            self._write_gui_error(exc)
+            messagebox.showerror("读取坐标失败", str(exc))
 
     def _load_companies_from_excel(self, excel_path: Path) -> list[str]:
         if not excel_path.exists():
@@ -585,6 +739,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         selected_companies = companies[range_start - 1 : range_end]
         if len(selected_companies) > 1 and self.skip_navigation_var.get():
             raise ValueError("批量运行时不能勾选“跳过导航”，否则无法切换到下一家公司。")
+        coordinate_overrides = self._collect_coordinate_overrides()
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -610,6 +765,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             "skip_navigation": self.skip_navigation_var.get(),
             "skip_folder_dialog": self.skip_folder_dialog_var.get(),
             "return_home": self.return_home_var.get(),
+            "coordinate_overrides": coordinate_overrides,
         }
 
     def _build_args_for_company(self, config: dict, company_name: str, should_return_home: bool):
@@ -640,6 +796,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             "--post-f9-wait-seconds",
             config["post_f9_wait"],
         ]
+        argv.extend(self._build_coordinate_args(config["coordinate_overrides"]))
         if config["navigation_only"]:
             argv.append("--navigation-only")
         if config["skip_navigation"]:
@@ -690,7 +847,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         return summary_path
 
     def start_run(self):
-        if self.is_running:
+        if self.is_running or self.is_calibrating:
             messagebox.showinfo("任务进行中", "当前已有任务在运行。")
             return
 
@@ -807,9 +964,137 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         self.worker_thread = threading.Thread(target=worker, daemon=True)
         self.worker_thread.start()
 
+    def _collect_calibration_config(self) -> dict:
+        if not self.start_wait_var.get().strip():
+            raise ValueError("请填写启动等待秒数。")
+        if not self.enter_wait_var.get().strip():
+            raise ValueError("请填写 Enter 等待秒数。")
+        if not self.post_f9_wait_var.get().strip():
+            raise ValueError("请填写 F9 等待秒数。")
+        float(self.start_wait_var.get().strip())
+        float(self.enter_wait_var.get().strip())
+        float(self.post_f9_wait_var.get().strip())
+
+        excel_path = self.excel_path_var.get().strip()
+        choice_exe = self.choice_exe_var.get().strip()
+        log_dir = self.log_dir_var.get().strip()
+        if not excel_path:
+            raise ValueError("请选择 Excel 文件。")
+        if not choice_exe:
+            raise ValueError("请输入 Choice 程序路径。")
+        if not log_dir:
+            raise ValueError("请输入日志目录。")
+
+        companies = self._load_companies_from_excel(Path(excel_path))
+        if not companies:
+            raise ValueError("Excel 中没有可用公司。")
+        try:
+            range_start = max(1, int(self.range_start_var.get() or 1))
+        except Exception:
+            range_start = 1
+        if range_start > len(companies):
+            raise ValueError(f"提取范围超出企业总数，当前 Excel 共 {len(companies)} 家企业。")
+
+        Path(log_dir).mkdir(parents=True, exist_ok=True)
+        calibration_target = self._target_name_from_label(self.calibration_target_var.get())
+        return {
+            "choice_exe": choice_exe,
+            "log_dir": log_dir,
+            "company": companies[range_start - 1],
+            "start_wait": self.start_wait_var.get().strip(),
+            "enter_wait": self.enter_wait_var.get().strip(),
+            "post_f9_wait": self.post_f9_wait_var.get().strip(),
+            "calibration_target": calibration_target,
+            "coordinate_overrides": self._collect_coordinate_overrides(),
+        }
+
+    def start_coordinate_calibration(self):
+        if self.is_running or self.is_calibrating:
+            messagebox.showinfo("任务进行中", "当前已有任务在运行。")
+            return
+        try:
+            config = self._collect_calibration_config()
+        except Exception as exc:
+            messagebox.showerror("参数错误", str(exc))
+            return
+
+        self.log_text.delete("1.0", "end")
+        self._append_log(
+            f"[GUI] 坐标测试开始：{config['calibration_target']}，使用公司：{config['company']}\n"
+            "[GUI] 程序会执行到该步骤并移动鼠标，随后停止，不会继续下载。\n\n"
+        )
+        self.is_calibrating = True
+        self.stop_requested = False
+        self.stop_event.clear()
+        self.start_button.configure(state="disabled")
+        self.calibration_button.configure(state="disabled")
+        self.stop_button.configure(state="normal")
+        self.status_var.set("坐标测试中")
+
+        def worker():
+            start_wait = max(0.0, float(config["start_wait"] or 0))
+            if start_wait:
+                self.output_queue.put(f"[GUI] 启动等待 {start_wait:g} 秒后开始坐标测试\n")
+                if self.stop_event.wait(start_wait):
+                    self.root.after(0, lambda: self._finish_calibration(2))
+                    return
+
+            argv = [
+                "--exe",
+                config["choice_exe"],
+                "--report-name",
+                config["company"],
+                "--allowed-report",
+                config["company"],
+                "--log-dir",
+                config["log_dir"],
+                "--batch-count",
+                "1",
+                "--max-batch-count",
+                "1",
+                "--enter-wait-seconds",
+                config["enter_wait"],
+                "--post-f9-wait-seconds",
+                config["post_f9_wait"],
+                "--calibrate-target",
+                config["calibration_target"],
+                "--skip-return-home",
+            ]
+            argv.extend(self._build_coordinate_args(config["coordinate_overrides"]))
+            try:
+                args = choice_automation.parse_args(argv)
+                code = choice_automation.run_with_args(
+                    args,
+                    extra_log_handlers=[self.log_handler],
+                    stop_event=self.stop_event,
+                )
+            except Exception as exc:
+                code = 1
+                self.output_queue.put(f"[GUI] 坐标测试异常: {exc}\n")
+            self.root.after(0, lambda: self._finish_calibration(code))
+
+        self.calibration_thread = threading.Thread(target=worker, daemon=True)
+        self.calibration_thread.start()
+
+    def _finish_calibration(self, code: int):
+        self.is_calibrating = False
+        self.start_button.configure(state="normal")
+        self.calibration_button.configure(state="normal")
+        self.stop_button.configure(state="disabled")
+        if code == 0:
+            self.status_var.set("坐标测试完成")
+            self._append_log("[GUI] 坐标测试完成。请观察鼠标位置，如不准确可用“取鼠标”或手动修改坐标。\n")
+        elif self.stop_requested or code == 2:
+            self.status_var.set("坐标测试已停止")
+            self._append_log("[GUI] 坐标测试已按请求停止\n")
+        else:
+            self.status_var.set("坐标测试失败")
+            self._append_log(f"[GUI] 坐标测试失败，退出码: {code}\n")
+
     def _finish_run(self, code: int, completed: int, total: int):
         self.is_running = False
         self.start_button.configure(state="normal")
+        self.calibration_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         if code == 0:
             self.status_var.set(f"运行完成 ({total}/{total})")
@@ -825,7 +1110,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             self._clear_runtime_cache()
 
     def stop_run(self):
-        if not self.is_running:
+        if not self.is_running and not self.is_calibrating:
             return
         self.stop_requested = True
         self.stop_event.set()
@@ -869,7 +1154,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             self._append_log(f"[GUI] 清理本地缓存设置失败: {exc}\n")
 
     def on_close(self):
-        if self.is_running:
+        if self.is_running or self.is_calibrating:
             if not messagebox.askyesno("退出确认", "任务仍在运行，确定要关闭窗口吗？"):
                 return
         self._save_settings()
