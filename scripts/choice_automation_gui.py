@@ -160,21 +160,19 @@ class AutomationGui:
         ttk.Label(stat_panel, text="当前状态", style="Hero.TLabel").grid(row=0, column=1, sticky="w", padx=(20, 0))
         ttk.Label(stat_panel, textvariable=self.status_var, style="Stat.TLabel").grid(row=1, column=1, sticky="w", padx=(20, 0), pady=(6, 0))
 
-        paned = ttk.Panedwindow(self.root, orient="vertical")
-        paned.grid(row=1, column=0, sticky="nsew", padx=16, pady=(10, 8))
-
-        top_surface = ttk.Frame(paned, style="Surface.TFrame", padding=0)
-        top_surface.columnconfigure(0, weight=1)
-        top_surface.rowconfigure(0, weight=1)
+        main_surface = ttk.Frame(self.root, style="Surface.TFrame", padding=0)
+        main_surface.grid(row=1, column=0, sticky="nsew", padx=16, pady=(10, 8))
+        main_surface.columnconfigure(0, weight=1)
+        main_surface.rowconfigure(0, weight=1)
 
         self.content_canvas = tk.Canvas(
-            top_surface,
+            main_surface,
             background="#eef3f9",
             highlightthickness=0,
             bd=0,
         )
         content_scrollbar = ttk.Scrollbar(
-            top_surface,
+            main_surface,
             orient="vertical",
             command=self.content_canvas.yview,
             style="App.Vertical.TScrollbar",
@@ -186,6 +184,7 @@ class AutomationGui:
         self.scrollable_body = ttk.Frame(self.content_canvas, style="Panel.TFrame", padding=(0, 0, 4, 0))
         self.scrollable_body.columnconfigure(0, weight=1, uniform="top_cols")
         self.scrollable_body.columnconfigure(1, weight=1, uniform="top_cols")
+        self.scrollable_body.rowconfigure(1, weight=1)
         self.content_canvas_window = self.content_canvas.create_window((0, 0), window=self.scrollable_body, anchor="nw")
         self.scrollable_body.bind("<Configure>", self._on_scroll_body_configure)
         self.content_canvas.bind("<Configure>", self._on_canvas_configure)
@@ -319,14 +318,15 @@ class AutomationGui:
         ttk.Button(actions, text="打开下载目录", command=self.open_output_dir, style="Muted.TButton").grid(row=2, column=0, sticky="ew", pady=(16, 0))
         ttk.Button(actions, text="打开日志目录", command=self.open_log_dir, style="Muted.TButton").grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
-        log_card = ttk.LabelFrame(paned, text="运行日志", style="Card.TLabelframe")
+        log_card = ttk.LabelFrame(self.scrollable_body, text="运行日志", style="Card.TLabelframe")
+        log_card.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
         log_card.columnconfigure(0, weight=1)
         log_card.rowconfigure(0, weight=1)
 
         self.log_text = tk.Text(
             log_card,
             wrap="word",
-            height=10,
+            height=18,
             bg="#0f1722",
             fg="#e8eef8",
             insertbackground="#e8eef8",
@@ -341,10 +341,6 @@ class AutomationGui:
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.configure(cursor="xterm")
 
-        paned.add(top_surface, weight=5)
-        paned.add(log_card, weight=2)
-        paned.sashpos(0, 690)
-
         status_bar = ttk.Frame(self.root, style="App.TFrame", padding=(20, 0, 20, 12))
         status_bar.grid(row=2, column=0, sticky="ew")
         status_bar.columnconfigure(0, weight=1)
@@ -356,11 +352,17 @@ class AutomationGui:
         self._bind_mousewheel(left)
         self._bind_mousewheel(right)
         self._bind_mousewheel(form)
+        self._bind_log_mousewheel()
 
     def _bind_mousewheel(self, widget):
         widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
         widget.bind("<Button-4>", self._on_mousewheel, add="+")
         widget.bind("<Button-5>", self._on_mousewheel, add="+")
+
+    def _bind_log_mousewheel(self):
+        self.log_text.bind("<MouseWheel>", self._on_log_mousewheel, add="+")
+        self.log_text.bind("<Button-4>", self._on_log_mousewheel, add="+")
+        self.log_text.bind("<Button-5>", self._on_log_mousewheel, add="+")
 
     def _on_mousewheel(self, event):
         if hasattr(event, "delta") and event.delta:
@@ -369,6 +371,15 @@ class AutomationGui:
             self.content_canvas.yview_scroll(-1, "units")
         elif getattr(event, "num", None) == 5:
             self.content_canvas.yview_scroll(1, "units")
+        return "break"
+
+    def _on_log_mousewheel(self, event):
+        if hasattr(event, "delta") and event.delta:
+            self.log_text.yview_scroll(int(-event.delta / 120), "units")
+        elif getattr(event, "num", None) == 4:
+            self.log_text.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5:
+            self.log_text.yview_scroll(1, "units")
         return "break"
 
     def _on_scroll_body_configure(self, _event):

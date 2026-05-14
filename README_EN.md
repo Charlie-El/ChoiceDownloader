@@ -41,7 +41,7 @@ This tool uses desktop automation, so it is sensitive to UI layout. During a bat
 Download this file from GitHub Releases:
 
 ```text
-ChoiceDownloader-v0.3.0-windows-x64.exe
+ChoiceDownloader-v0.3.1-windows-x64.exe
 ```
 
 Steps:
@@ -50,7 +50,7 @@ Steps:
 2. Select the Excel company list.
 3. Select the local Choice executable or shortcut.
 4. Select the download directory and log directory.
-5. Manually fill in download count, safety limit, row range, and wait times.
+5. Manually fill in download count, safety limit, row range, and maximum wait times.
 6. If you need annual-report filtering, fill in filename keywords such as `10-K,20-F,40-F`; leave it empty to keep all downloaded files.
 7. For the first run, process only one company.
 8. Make sure Choice is logged in and ready for interaction.
@@ -99,8 +99,8 @@ Notes:
 | `本次上限` | Maximum allowed download count for the current run. Values above this limit are blocked before execution. |
 | `提取范围` | Process only the selected row range from the Excel list. After selecting Excel, the program fills the full range automatically and the user can edit it. |
 | `启动等待` | Seconds to wait after clicking start, useful for letting the terminal window settle. |
-| `Enter 等待` | Seconds to wait after submitting the company search. |
-| `F9 等待` | Seconds to wait after sending F9. |
+| `Enter 等待` | Maximum seconds to wait after submitting the company search. The tool continues earlier once the page appears stable. |
+| `F9 等待` | Maximum seconds to wait after sending F9. The tool continues earlier once the page appears stable. |
 | `文件名筛选` | Optional comma-separated filename keywords. Leave empty to disable filtering. |
 | `匹配方式` | Match any keyword, or require all keywords. |
 | `只保留最新日期` | Copy only the newest dated matching file into the `最新` folder. |
@@ -130,7 +130,7 @@ Available calibration targets:
 
 Recommended calibration workflow:
 
-1. Fill in the Excel file, Choice entry path, log directory, and wait times.
+1. Fill in the Excel file, Choice entry path, log directory, and maximum wait times.
 2. Select a target under “测试定位点”, such as `公司公告入口`.
 3. Click “执行到此处并移动鼠标”. The tool uses the first company in the selected range, runs to that step, moves the mouse to the target, and stops before download.
 4. If the mouse is not on the correct UI element, edit X/Y manually, or move the mouse to the correct position and click “取鼠标” in that row.
@@ -245,7 +245,7 @@ dist\ChoiceDownloader.exe
 Recommended GitHub Releases asset name:
 
 ```text
-ChoiceDownloader-v0.3.0-windows-x64.exe
+ChoiceDownloader-v0.3.1-windows-x64.exe
 ```
 
 ## Project Structure
@@ -259,7 +259,7 @@ ChoiceDownloader\
     company_list_template.xlsx    # Company list import template
     README.md                     # Template notes
   release\
-    ChoiceDownloader-v0.3.0-windows-x64.exe
+    ChoiceDownloader-v0.3.1-windows-x64.exe
   choice_announcement_workbench.spec
   requirements.txt
   README.md

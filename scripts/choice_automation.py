@@ -103,6 +103,89 @@ def controlled_sleep(seconds: float, stop_event=None, interval: float = 0.1):
     check_stop(stop_event)
 
 
+def _rect_signature(rect) -> tuple[int, int, int, int]:
+    return (rect.left, rect.top, rect.right, rect.bottom)
+
+
+def _window_stability_signature(window, max_controls: int = 350):
+    rect = window.rectangle()
+    signature = [("window", *_rect_signature(rect))]
+    try:
+        descendants = window.descendants()
+    except Exception:
+        descendants = []
+
+    for ctrl in descendants[:max_controls]:
+        try:
+            ctrl_rect = ctrl.rectangle()
+            info = ctrl.element_info
+            control_type = getattr(info, "control_type", "")
+            name = ""
+            if control_type in {"Button", "Edit", "Text", "TabItem", "DataItem", "MenuItem"}:
+                try:
+                    name = ctrl.window_text()[:80]
+                except Exception:
+                    name = ""
+            signature.append((control_type, *_rect_signature(ctrl_rect), name))
+        except Exception:
+            continue
+    signature.append(("count", len(descendants)))
+    return tuple(signature)
+
+
+def wait_for_window_stable(
+    window,
+    max_wait_seconds: float,
+    step_name: str,
+    stop_event=None,
+    min_wait_seconds: float = 0.6,
+    stable_seconds: float = 0.8,
+    poll_seconds: float = 0.25,
+) -> bool:
+    if max_wait_seconds <= 0:
+        check_stop(stop_event)
+        logging.info("skipped stable wait for %s because max wait is 0", step_name)
+        return False
+
+    started_at = time.time()
+    deadline = started_at + max_wait_seconds
+    min_deadline = started_at + min(min_wait_seconds, max_wait_seconds)
+    last_signature = None
+    stable_since = None
+
+    while time.time() < deadline:
+        check_stop(stop_event)
+        try:
+            signature = _window_stability_signature(window)
+        except Exception as exc:
+            logging.warning("stable wait snapshot failed for %s: %s", step_name, exc)
+            controlled_sleep(max_wait_seconds, stop_event)
+            return False
+
+        now = time.time()
+        if signature == last_signature and now >= min_deadline:
+            if stable_since is None:
+                stable_since = now
+            elif now - stable_since >= stable_seconds:
+                logging.info(
+                    "window became stable for %s after %.1f seconds",
+                    step_name,
+                    now - started_at,
+                )
+                return True
+        else:
+            last_signature = signature
+            stable_since = None
+        controlled_sleep(min(poll_seconds, max(0.0, deadline - time.time())), stop_event)
+
+    logging.info(
+        "window stable wait reached max for %s: %.1f seconds",
+        step_name,
+        max_wait_seconds,
+    )
+    return False
+
+
 def parse_coordinate_overrides(raw_items: list[str] | None) -> dict[str, tuple[int, int]]:
     overrides: dict[str, tuple[int, int]] = {}
     for raw_item in raw_items or []:
@@ -340,9 +423,9 @@ def open_company_announcement(
     controlled_sleep(1.0, stop_event)
     logging.info("waited 1.0 second after typing company name before pressing Enter")
     submit_search_with_enter(window, stop_event=stop_event)
-    controlled_sleep(enter_wait_seconds, stop_event)
+    wait_for_window_stable(window, enter_wait_seconds, "company search after Enter", stop_event=stop_event)
     send_f9(window, stop_event=stop_event)
-    controlled_sleep(post_f9_wait_seconds, stop_event)
+    wait_for_window_stable(window, post_f9_wait_seconds, "F9 page switch", stop_event=stop_event)
     scroll_left_nav_to_bottom(window, stop_event=stop_event, coordinate_overrides=coordinate_overrides)
     controlled_sleep(0.8, stop_event)
     click_window_relative_point(
@@ -351,8 +434,7 @@ def open_company_announcement(
         "company_announcement",
         stop_event=stop_event,
     )
-    controlled_sleep(3.2, stop_event)
-    logging.info("waited 3.2 seconds before all announcements filter")
+    wait_for_window_stable(window, 3.2, "company announcement page", stop_event=stop_event)
 
 
 def click_all_announcements(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
@@ -362,7 +444,7 @@ def click_all_announcements(window, stop_event=None, coordinate_overrides: dict[
         "all_announcements",
         stop_event=stop_event,
     )
-    controlled_sleep(1.0, stop_event)
+    wait_for_window_stable(window, 1.0, "all announcements filter", stop_event=stop_event, min_wait_seconds=0.3, stable_seconds=0.4)
 
 
 def click_financial_report(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
@@ -372,7 +454,7 @@ def click_financial_report(window, stop_event=None, coordinate_overrides: dict[s
         "financial_report",
         stop_event=stop_event,
     )
-    controlled_sleep(1.2, stop_event)
+    wait_for_window_stable(window, 1.2, "financial report filter", stop_event=stop_event, min_wait_seconds=0.3, stable_seconds=0.4)
 
 
 def open_financial_reports(window, stop_event=None, coordinate_overrides: dict[str, tuple[int, int]] | None = None):
@@ -405,9 +487,9 @@ def move_to_calibration_target(
     controlled_sleep(1.0, stop_event)
     logging.info("waited 1.0 second after typing company name before pressing Enter")
     submit_search_with_enter(window, stop_event=stop_event)
-    controlled_sleep(enter_wait_seconds, stop_event)
+    wait_for_window_stable(window, enter_wait_seconds, "company search after Enter", stop_event=stop_event)
     send_f9(window, stop_event=stop_event)
-    controlled_sleep(post_f9_wait_seconds, stop_event)
+    wait_for_window_stable(window, post_f9_wait_seconds, "F9 page switch", stop_event=stop_event)
 
     if target_name == "left_nav_scroll":
         move_mouse_to_window_relative_point(
@@ -435,8 +517,7 @@ def move_to_calibration_target(
         "company_announcement",
         stop_event=stop_event,
     )
-    controlled_sleep(3.2, stop_event)
-    logging.info("waited 3.2 seconds before all announcements filter")
+    wait_for_window_stable(window, 3.2, "company announcement page", stop_event=stop_event)
 
     if target_name == "all_announcements":
         move_mouse_to_window_relative_point(
@@ -475,7 +556,7 @@ def move_to_calibration_target(
             "batch_download_button",
             stop_event=stop_event,
         )
-        controlled_sleep(1.2, stop_event)
+        wait_for_window_stable(window, 1.2, "batch download popup", stop_event=stop_event, min_wait_seconds=0.4, stable_seconds=0.4)
         move_mouse_to_window_relative_point(
             window,
             get_coordinate(target_name, coordinate_overrides),
@@ -550,7 +631,7 @@ def configure_batch_download_dialog(
     stop_event=None,
     coordinate_overrides: dict[str, tuple[int, int]] | None = None,
 ):
-    controlled_sleep(1.2, stop_event)
+    wait_for_window_stable(window, 1.2, "batch download popup", stop_event=stop_event, min_wait_seconds=0.4, stable_seconds=0.4)
     if skip_folder_dialog:
         logging.info("skipped folder dialog handling by option")
     else:
