@@ -1,0 +1,26 @@
+# Runtime output
+downloads/
+logs/
+choice_automation_gui_settings.json
+choice_batch_summary.xlsx
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Local files
+*.log
+~$*.xlsx
+~$*.xlsm
+
+# Keep packaged release assets only when intentionally publishing them
+!release/
+!release/*.exe
