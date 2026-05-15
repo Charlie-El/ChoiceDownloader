@@ -18,11 +18,11 @@ The tool is intended for users who already have a valid Choice account, a local 
 - Configure startup wait, Enter wait, and F9 wait times.
 - Filter downloaded files by filename keywords such as `10-K,20-F,40-F`.
 - Choose between “match any keyword” and “match all keywords”.
-- Copy only the newest dated matching file into the `最新` folder.
+- Optionally create a `最新` folder: only when enabled, copy the newest dated matching file into it.
 - Support single-company debugging modes, such as navigating to the announcement page without downloading.
 - Continue after single-company failures and write a batch summary workbook.
 - The release build does not prefill user paths, company lists, download directories, log directories, or filename keywords. Users must provide all run-specific information.
-- Avoid persistent GUI settings JSON by default, reducing the risk of leaking local paths when sharing the project.
+- Remember local settings: paths, numeric fields, options and coordinate overrides are stored in the current Windows user's config directory and restored on the next launch. The settings file is not written next to the exe.
 
 ## Requirements
 
@@ -41,7 +41,7 @@ This tool uses desktop automation, so it is sensitive to UI layout. During a bat
 Download this file from GitHub Releases:
 
 ```text
-ChoiceDownloader-v0.3.1-windows-x64.exe
+ChoiceDownloader-v0.3.2-hk-windows-x64.exe
 ```
 
 Steps:
@@ -55,7 +55,7 @@ Steps:
 7. For the first run, process only one company.
 8. Make sure Choice is logged in and ready for interaction.
 9. Click “开始批量运行”.
-10. After completion, check the download directory, the `最新` folder, and `choice_batch_summary.xlsx`.
+10. After completion, check the download directory and `choice_batch_summary.xlsx`; if the latest-folder option is enabled, also check the `最新` folder.
 
 ## Excel Company List Template
 
@@ -103,7 +103,7 @@ Notes:
 | `F9 等待` | Maximum seconds to wait after sending F9. The tool continues earlier once the page appears stable. |
 | `文件名筛选` | Optional comma-separated filename keywords. Leave empty to disable filtering. |
 | `匹配方式` | Match any keyword, or require all keywords. |
-| `只保留最新日期` | Copy only the newest dated matching file into the `最新` folder. |
+| `只生成最新文件夹` | When enabled, copy only the newest dated filename-matched file into the `最新` folder. When disabled, no `最新` folder is created. |
 | `只导航到公告页，不执行下载` | Debug mode: navigate only, do not download. |
 | `跳过导航，假设当前已经在公告页` | Useful for single-company debugging only; not recommended for batch runs. |
 | `跳过下载弹窗里的目录选择步骤` | Use only when the Choice download dialog already keeps the correct target directory. |
@@ -132,10 +132,11 @@ Recommended calibration workflow:
 
 1. Fill in the Excel file, Choice entry path, log directory, and maximum wait times.
 2. Select a target under “测试定位点”, such as `公司公告入口`.
-3. Click “执行到此处并移动鼠标”. The tool uses the first company in the selected range, runs to that step, moves the mouse to the target, and stops before download.
+3. Click “流程测试到此处”. The tool uses the first company in the selected range, runs to that step, moves the mouse to the target, and stops before download.
 4. If the mouse is not on the correct UI element, edit X/Y manually, or move the mouse to the correct position and click “取鼠标” in that row.
-5. Click “确认” in the same row. The current run will use the coordinates shown in the GUI.
-6. For Hong Kong stocks, test `公司公告入口` first. If later filters or dialog buttons differ, calibrate those targets one by one.
+5. Click “确认” in the same row. Subsequent runs will use the coordinates shown in the GUI and restore them on the next launch.
+6. To undo one target, click “恢复默认” in that row.
+7. For Hong Kong stocks, test `公司公告入口` first. If later filters or dialog buttons differ, calibrate those targets one by one.
 
 Coordinates are relative to the top-left corner of the Choice window. For batch runs, keep the Choice window maximized and avoid changing display scaling, resolution, or window position during automation.
 
@@ -155,7 +156,7 @@ When the matching mode is “match any keyword”, a file is kept if its filenam
 | `20-F` | `20F`, `20 F`, `20－F` |
 | `40-F` | `40F`, `40 F`, `40－F` |
 
-If “latest only” is enabled, the newest dated matching file is copied into the `最新` folder. If no target file is found, the summary workbook records `没筛选成功`.
+Only when the latest-folder option is enabled will the newest dated matching file be copied into the `最新` folder. When disabled, the tool keeps Choice's original downloaded files only and does not create `最新`. If the option is enabled and no target file is found, the summary workbook records `没筛选成功`.
 
 ## Workflow
 
@@ -172,7 +173,7 @@ If “latest only” is enabled, the newest dated matching file is copied into t
 11. Set the download directory and download count.
 12. Wait until downloaded files appear and become stable.
 13. Filter downloaded files by filename keywords.
-14. Copy matching files into the `最新` folder.
+14. If the latest-folder option is enabled, copy the newest matching file into `最新`; otherwise skip this step.
 15. Return to the home page and continue with the next company.
 16. Write the batch summary workbook and runtime logs.
 
@@ -185,7 +186,7 @@ Common outputs:
 | Output | Description |
 | --- | --- |
 | Original announcement files | Web or document files downloaded by Choice. |
-| `最新\` | Folder created by the tool to store the newest matched file. |
+| `最新\` | Created only when the latest-folder option is enabled; stores the newest matched file. |
 | `choice_batch_summary.xlsx` | Batch summary workbook for success and failure status. |
 | Runtime logs | Logs saved to the selected log directory for troubleshooting. |
 
@@ -245,7 +246,7 @@ dist\ChoiceDownloader.exe
 Recommended GitHub Releases asset name:
 
 ```text
-ChoiceDownloader-v0.3.1-windows-x64.exe
+ChoiceDownloader-v0.3.2-hk-windows-x64.exe
 ```
 
 ## Project Structure
@@ -259,7 +260,7 @@ ChoiceDownloader\
     company_list_template.xlsx    # Company list import template
     README.md                     # Template notes
   release\
-    ChoiceDownloader-v0.3.1-windows-x64.exe
+    ChoiceDownloader-v0.3.2-hk-windows-x64.exe
   choice_announcement_workbench.spec
   requirements.txt
   README.md
@@ -290,7 +291,7 @@ Before a real batch task, check that:
 | Click positions are inaccurate | Check display scaling, resolution, and Choice layout; test with one company first. |
 | No matched files after download | Check filename keywords and matching mode, or clear keywords temporarily to confirm download success. |
 | Some companies fail while others work | Review `choice_batch_summary.xlsx` and logs, then rerun failed companies separately. |
-| No JSON settings file is generated | This is expected in the current version to avoid local path residue. |
+| No JSON settings file is generated next to the exe | This is expected. Settings are stored in the current user's config directory, for example `%APPDATA%\ChoiceDownloader\settings.json`. |
 | Folder dialog cannot open | Type the directory path manually, or check the GUI error log in the system temp directory. |
 
 ## Privacy and Release Cleanup
@@ -301,10 +302,10 @@ Do not commit or share the following files:
 - Runtime logs: `logs/`
 - PyInstaller intermediate folders: `build/`, `dist/`
 - Python cache: `__pycache__/`, `*.pyc`
-- Local GUI settings cache: `choice_automation_gui_settings.json`
+- Local GUI settings cache, for example `%APPDATA%\ChoiceDownloader\settings.json`
 - Real company lists, business Excel files, or downloaded Choice files
 
-The current version does not write a local settings JSON by default. Logs and downloaded results are written only to the directories selected in the GUI.
+The current version does not prefill user paths, company lists or filename keywords. GUI memory is stored only in the current Windows user's AppData config directory, not in the project directory. Logs and downloaded results are written only to the directories selected in the GUI.
 
 ## Acknowledgements
 

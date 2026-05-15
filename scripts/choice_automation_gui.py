@@ -1,6 +1,8 @@
 import ctypes
 import ctypes.wintypes
+import json
 import logging
+import os
 import queue
 import subprocess
 import sys
@@ -22,8 +24,16 @@ def get_app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def get_user_config_dir() -> Path:
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / "ChoiceDownloader"
+    return Path.home() / ".choice_downloader"
+
+
 APP_DIR = get_app_dir()
-SETTINGS_PATH = APP_DIR / "choice_automation_gui_settings.json"
+USER_CONFIG_DIR = get_user_config_dir()
+SETTINGS_PATH = USER_CONFIG_DIR / "settings.json"
 ERROR_LOG_PATH = Path(tempfile.gettempdir()) / "choice_downloader_gui_error.log"
 DEFAULT_BROWSE_DIR = Path.home() if Path.home().exists() else APP_DIR
 KEYWORD_MATCH_MODE_LABELS = {
@@ -31,6 +41,8 @@ KEYWORD_MATCH_MODE_LABELS = {
     "满足全部关键词": "and",
 }
 KEYWORD_MATCH_MODE_VALUES = list(KEYWORD_MATCH_MODE_LABELS.keys())
+TEST_DEFAULTS_ENABLED = False
+TEST_DEFAULTS: dict[str, str | bool] = {}
 COORDINATE_TARGET_LABELS = [
     ("left_nav_scroll", "左侧导航滚动点"),
     ("company_announcement", "公司公告入口"),
@@ -74,21 +86,22 @@ class AutomationGui:
         self.stop_requested = False
         self.stop_event = threading.Event()
         self.log_handler = QueueLogHandler(self.output_queue)
+        self._settings_loading = False
 
-        self.excel_path_var = tk.StringVar()
-        self.choice_exe_var = tk.StringVar()
-        self.output_dir_var = tk.StringVar()
-        self.log_dir_var = tk.StringVar()
-        self.batch_count_var = tk.StringVar()
-        self.max_batch_count_var = tk.StringVar()
-        self.range_start_var = tk.StringVar()
-        self.range_end_var = tk.StringVar()
-        self.filename_keywords_var = tk.StringVar()
+        self.excel_path_var = tk.StringVar(value=self._test_default("excel_path"))
+        self.choice_exe_var = tk.StringVar(value=self._test_default("choice_exe"))
+        self.output_dir_var = tk.StringVar(value=self._test_default("output_dir"))
+        self.log_dir_var = tk.StringVar(value=self._test_default("log_dir"))
+        self.batch_count_var = tk.StringVar(value=self._test_default("batch_count"))
+        self.max_batch_count_var = tk.StringVar(value=self._test_default("max_batch_count"))
+        self.range_start_var = tk.StringVar(value=self._test_default("range_start"))
+        self.range_end_var = tk.StringVar(value=self._test_default("range_end"))
+        self.filename_keywords_var = tk.StringVar(value=self._test_default("filename_keywords"))
         self.keyword_match_mode_var = tk.StringVar(value="满足任一关键词")
-        self.latest_only_var = tk.BooleanVar(value=False)
-        self.start_wait_var = tk.StringVar()
-        self.enter_wait_var = tk.StringVar()
-        self.post_f9_wait_var = tk.StringVar()
+        self.latest_only_var = tk.BooleanVar(value=bool(TEST_DEFAULTS.get("latest_only", False)) if TEST_DEFAULTS_ENABLED else False)
+        self.start_wait_var = tk.StringVar(value=self._test_default("start_wait"))
+        self.enter_wait_var = tk.StringVar(value=self._test_default("enter_wait"))
+        self.post_f9_wait_var = tk.StringVar(value=self._test_default("post_f9_wait"))
         self.navigation_only_var = tk.BooleanVar(value=False)
         self.skip_navigation_var = tk.BooleanVar(value=False)
         self.skip_folder_dialog_var = tk.BooleanVar(value=False)
@@ -101,9 +114,11 @@ class AutomationGui:
         self.calibration_target_var = tk.StringVar(value=COORDINATE_TARGET_LABELS[1][1])
 
         self.status_var = tk.StringVar(value="就绪")
-        self.summary_var = tk.StringVar(value="请填写本机路径和运行参数。程序不会预置或保存用户目录、公司名单和筛选条件。")
+        summary_text = "请填写本机路径和运行参数。程序不会预置用户目录、公司名单或筛选条件。"
+        self.summary_var = tk.StringVar(value=summary_text)
         self.company_count_var = tk.StringVar(value="未选择 Excel 文件")
         self.excel_path_var.trace_add("write", self._on_excel_path_changed)
+        self.latest_only_var.trace_add("write", self._on_latest_option_changed)
 
         self._load_settings()
         self._configure_style()
@@ -111,6 +126,11 @@ class AutomationGui:
         self._refresh_company_count_text()
         self._drain_output_queue()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _test_default(self, key: str) -> str:
+        if not TEST_DEFAULTS_ENABLED:
+            return ""
+        return str(TEST_DEFAULTS.get(key, ""))
 
     def _configure_style(self):
         style = ttk.Style()
@@ -245,22 +265,24 @@ class AutomationGui:
         filter_grid.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         filter_grid.columnconfigure(1, weight=1)
         ttk.Label(filter_grid, text="文件名筛选").grid(row=0, column=0, sticky="w")
-        ttk.Entry(filter_grid, textvariable=self.filename_keywords_var).grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        self.filename_keywords_entry = ttk.Entry(filter_grid, textvariable=self.filename_keywords_var)
+        self.filename_keywords_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
         ttk.Label(filter_grid, text="匹配方式").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Combobox(
+        self.keyword_match_mode_combo = ttk.Combobox(
             filter_grid,
             textvariable=self.keyword_match_mode_var,
             values=KEYWORD_MATCH_MODE_VALUES,
             state="readonly",
             width=14,
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
-        ttk.Checkbutton(filter_grid, text="只保留最新日期", variable=self.latest_only_var).grid(
+        )
+        self.keyword_match_mode_combo.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
+        ttk.Checkbutton(filter_grid, text="只生成最新文件夹", variable=self.latest_only_var).grid(
             row=2, column=1, sticky="w", pady=(8, 0)
         )
 
         ttk.Label(
             form,
-            text="文件名筛选为可选项。可填写逗号分隔关键词，例如 10-K,20-F,40-F；留空表示保留全部下载文件。",
+            text="文件名筛选为可选项。只有勾选“只生成最新文件夹”时，才会按关键词复制最新匹配文件到“最新”文件夹；未勾选则只保留 Choice 原始下载结果。",
             style="Subtle.TLabel",
             wraplength=640,
             justify="left",
@@ -353,6 +375,7 @@ class AutomationGui:
         self._bind_mousewheel(right)
         self._bind_mousewheel(form)
         self._bind_log_mousewheel()
+        self._refresh_filter_controls()
 
     def _bind_mousewheel(self, widget):
         widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
@@ -388,6 +411,17 @@ class AutomationGui:
     def _on_canvas_configure(self, event):
         self.content_canvas.itemconfigure(self.content_canvas_window, width=event.width)
 
+    def _on_latest_option_changed(self, *_args):
+        self._refresh_filter_controls()
+        self._save_settings()
+
+    def _refresh_filter_controls(self):
+        if not hasattr(self, "filename_keywords_entry"):
+            return
+        state = "normal" if self.latest_only_var.get() else "disabled"
+        self.filename_keywords_entry.configure(state=state)
+        self.keyword_match_mode_combo.configure(state="readonly" if self.latest_only_var.get() else "disabled")
+
     def _add_path_row(
         self,
         parent,
@@ -406,7 +440,7 @@ class AutomationGui:
         parent.columnconfigure(0, weight=1)
         ttk.Label(
             parent,
-            text="默认使用内置坐标。港股或不同分辨率下，可先测试鼠标位置，再填入新坐标并确认。",
+            text="默认使用内置坐标。建议先点“移动”检查位置，不准时点“取鼠标”读取当前位置，再点“确认”。",
             style="Subtle.TLabel",
             wraplength=620,
             justify="left",
@@ -429,9 +463,9 @@ class AutomationGui:
             row_actions.grid(row=row_index, column=3, sticky="w", pady=3)
             ttk.Button(
                 row_actions,
-                text="确认",
+                text="移动",
                 width=7,
-                command=lambda name=target_name: self.confirm_coordinate(name),
+                command=lambda name=target_name: self.move_to_coordinate(name),
             ).grid(row=0, column=0, sticky="w")
             ttk.Button(
                 row_actions,
@@ -439,6 +473,18 @@ class AutomationGui:
                 width=8,
                 command=lambda name=target_name: self.capture_mouse_coordinate(name),
             ).grid(row=0, column=1, sticky="w", padx=(6, 0))
+            ttk.Button(
+                row_actions,
+                text="确认",
+                width=7,
+                command=lambda name=target_name: self.confirm_coordinate(name),
+            ).grid(row=0, column=2, sticky="w", padx=(6, 0))
+            ttk.Button(
+                row_actions,
+                text="恢复默认",
+                width=9,
+                command=lambda name=target_name: self.restore_default_coordinate(name),
+            ).grid(row=0, column=3, sticky="w", padx=(6, 0))
 
         test_bar = ttk.Frame(parent)
         test_bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
@@ -451,7 +497,7 @@ class AutomationGui:
             state="readonly",
             width=18,
         ).grid(row=0, column=1, sticky="w", padx=(8, 8))
-        self.calibration_button = ttk.Button(test_bar, text="执行到此处并移动鼠标", command=self.start_coordinate_calibration)
+        self.calibration_button = ttk.Button(test_bar, text="流程测试到此处", command=self.start_coordinate_calibration)
         self.calibration_button.grid(row=0, column=2, sticky="e")
 
     def _choose_excel_file(self):
@@ -463,6 +509,7 @@ class AutomationGui:
         )
         if selected:
             self.excel_path_var.set(selected)
+            self._save_settings()
 
     def _choose_choice_exe(self):
         selected = filedialog.askopenfilename(
@@ -473,6 +520,7 @@ class AutomationGui:
         )
         if selected:
             self.choice_exe_var.set(selected)
+            self._save_settings()
 
     def _choose_output_dir(self):
         self._choose_directory("选择下载目录", self.output_dir_var)
@@ -495,6 +543,7 @@ class AutomationGui:
             return
         if selected:
             variable.set(selected)
+            self._save_settings()
 
     def _show_windows_folder_dialog(self, title: str, initial_dir: Path) -> str:
         escaped_title = self._powershell_quote(title)
@@ -577,34 +626,66 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             args.extend(["--coordinate", f"{name}={point[0]},{point[1]}"])
         return args
 
+    def _read_coordinate_from_inputs(self, target_name: str) -> tuple[int, int]:
+        x_var, y_var = self.coordinate_vars[target_name]
+        try:
+            return int(x_var.get().strip()), int(y_var.get().strip())
+        except Exception as exc:
+            raise ValueError("坐标必须填写为整数。") from exc
+
+    def _connect_choice_for_coordinate(self):
+        choice_exe = self.choice_exe_var.get().strip()
+        if not choice_exe:
+            raise ValueError("请先填写 Choice 程序路径。")
+        return choice_automation.launch_or_connect(Path(choice_exe))
+
+    def move_to_coordinate(self, target_name: str):
+        if self.is_running or self.is_calibrating:
+            messagebox.showinfo("任务进行中", "任务运行或流程测试时不能移动坐标。")
+            return
+        try:
+            point = self._read_coordinate_from_inputs(target_name)
+            window = self._connect_choice_for_coordinate()
+            choice_automation.move_mouse_to_window_relative_point(window, point, f"gui_preview_{target_name}")
+            label = COORDINATE_LABEL_BY_NAME.get(target_name, target_name)
+            self._append_log(f"[GUI] 已移动到 {label}=({point[0]}, {point[1]})\n")
+        except Exception as exc:
+            self._write_gui_error(exc)
+            messagebox.showerror("移动坐标失败", str(exc))
+
     def confirm_coordinate(self, target_name: str):
         try:
-            x_var, y_var = self.coordinate_vars[target_name]
-            x_value = int(x_var.get().strip())
-            y_value = int(y_var.get().strip())
-        except Exception:
-            messagebox.showerror("坐标错误", "坐标必须填写为整数。")
+            x_value, y_value = self._read_coordinate_from_inputs(target_name)
+        except Exception as exc:
+            messagebox.showerror("坐标错误", str(exc))
             return
         self.confirmed_coordinates[target_name] = (x_value, y_value)
         label = COORDINATE_LABEL_BY_NAME.get(target_name, target_name)
         self._append_log(f"[GUI] 已确认坐标 {label}=({x_value}, {y_value})，后续运行将按当前坐标执行\n")
+        self._save_settings()
+
+    def restore_default_coordinate(self, target_name: str):
+        default_x, default_y = choice_automation.COORDINATE_DEFAULTS[target_name]
+        x_var, y_var = self.coordinate_vars[target_name]
+        x_var.set(str(default_x))
+        y_var.set(str(default_y))
+        self.confirmed_coordinates[target_name] = (default_x, default_y)
+        label = COORDINATE_LABEL_BY_NAME.get(target_name, target_name)
+        self._append_log(f"[GUI] 已恢复默认坐标 {label}=({default_x}, {default_y})\n")
+        self._save_settings()
 
     def capture_mouse_coordinate(self, target_name: str):
         if self.is_running or self.is_calibrating:
             messagebox.showinfo("任务进行中", "任务运行或校准时不能读取鼠标坐标。")
             return
-        choice_exe = self.choice_exe_var.get().strip()
-        if not choice_exe:
-            messagebox.showerror("参数错误", "请先填写 Choice 程序路径，用于连接 Choice 窗口。")
-            return
         self._append_log(f"[GUI] 3 秒内请把鼠标移动到目标位置：{target_name}\n")
-        self.root.after(3000, lambda: self._capture_mouse_coordinate_now(target_name, choice_exe))
+        self.root.after(3000, lambda: self._capture_mouse_coordinate_now(target_name))
 
-    def _capture_mouse_coordinate_now(self, target_name: str, choice_exe: str):
+    def _capture_mouse_coordinate_now(self, target_name: str):
         if self.is_running or self.is_calibrating:
             return
         try:
-            window = choice_automation.launch_or_connect(Path(choice_exe))
+            window = self._connect_choice_for_coordinate()
             rect = window.rectangle()
             cursor_point = ctypes.wintypes.POINT()
             ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor_point))
@@ -613,7 +694,9 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             x_var, y_var = self.coordinate_vars[target_name]
             x_var.set(str(relative_x))
             y_var.set(str(relative_y))
-            self._append_log(f"[GUI] 已读取鼠标坐标 {target_name}=({relative_x}, {relative_y})\n")
+            label = COORDINATE_LABEL_BY_NAME.get(target_name, target_name)
+            self._append_log(f"[GUI] 已读取鼠标坐标 {label}=({relative_x}, {relative_y})，请点“确认”后生效\n")
+            self._save_settings()
         except Exception as exc:
             self._write_gui_error(exc)
             messagebox.showerror("读取坐标失败", str(exc))
@@ -691,7 +774,10 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         self.company_count_var.set(f"已加载 {len(companies)} 家企业")
 
     def _on_excel_path_changed(self, *_args):
+        if getattr(self, "_settings_loading", False):
+            return
         self._refresh_company_count_text()
+        self._save_settings()
 
     def _append_log(self, text: str):
         self.log_text.insert("end", text)
@@ -877,6 +963,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             messagebox.showerror("参数错误", str(exc))
             return
 
+        self._save_settings()
         self.log_text.delete("1.0", "end")
         total = len(config["companies"])
         self._append_log(
@@ -976,15 +1063,12 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         self.worker_thread.start()
 
     def _collect_calibration_config(self) -> dict:
-        if not self.start_wait_var.get().strip():
-            raise ValueError("请填写启动等待秒数。")
-        if not self.enter_wait_var.get().strip():
-            raise ValueError("请填写 Enter 等待秒数。")
-        if not self.post_f9_wait_var.get().strip():
-            raise ValueError("请填写 F9 等待秒数。")
-        float(self.start_wait_var.get().strip())
-        float(self.enter_wait_var.get().strip())
-        float(self.post_f9_wait_var.get().strip())
+        start_wait = self.start_wait_var.get().strip() or "0"
+        enter_wait = self.enter_wait_var.get().strip() or "3"
+        post_f9_wait = self.post_f9_wait_var.get().strip() or "3"
+        float(start_wait)
+        float(enter_wait)
+        float(post_f9_wait)
 
         excel_path = self.excel_path_var.get().strip()
         choice_exe = self.choice_exe_var.get().strip()
@@ -1012,9 +1096,9 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             "choice_exe": choice_exe,
             "log_dir": log_dir,
             "company": companies[range_start - 1],
-            "start_wait": self.start_wait_var.get().strip(),
-            "enter_wait": self.enter_wait_var.get().strip(),
-            "post_f9_wait": self.post_f9_wait_var.get().strip(),
+            "start_wait": start_wait,
+            "enter_wait": enter_wait,
+            "post_f9_wait": post_f9_wait,
             "calibration_target": calibration_target,
             "coordinate_overrides": self._collect_coordinate_overrides(),
         }
@@ -1029,6 +1113,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             messagebox.showerror("参数错误", str(exc))
             return
 
+        self._save_settings()
         self.log_text.delete("1.0", "end")
         self._append_log(
             f"[GUI] 坐标测试开始：{config['calibration_target']}，使用公司：{config['company']}\n"
@@ -1147,22 +1232,132 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
             messagebox.showerror("打开目录失败", f"无法打开目录：{exc}")
 
     def _load_settings(self):
+        if not SETTINGS_PATH.exists():
+            return
         try:
-            if SETTINGS_PATH.exists():
-                SETTINGS_PATH.unlink()
-        except Exception:
-            pass
+            self._settings_loading = True
+            data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return
+
+            fields = data.get("fields", {})
+            options = data.get("options", {})
+            coordinates = data.get("coordinates", {})
+            confirmed_coordinates = data.get("confirmed_coordinates", {})
+
+            field_vars = {
+                "excel_path": self.excel_path_var,
+                "choice_exe": self.choice_exe_var,
+                "output_dir": self.output_dir_var,
+                "log_dir": self.log_dir_var,
+                "batch_count": self.batch_count_var,
+                "max_batch_count": self.max_batch_count_var,
+                "range_start": self.range_start_var,
+                "range_end": self.range_end_var,
+                "filename_keywords": self.filename_keywords_var,
+                "keyword_match_mode": self.keyword_match_mode_var,
+                "start_wait": self.start_wait_var,
+                "enter_wait": self.enter_wait_var,
+                "post_f9_wait": self.post_f9_wait_var,
+                "calibration_target": self.calibration_target_var,
+            }
+            for key, variable in field_vars.items():
+                if key in fields and fields[key] is not None:
+                    variable.set(str(fields[key]))
+
+            bool_vars = {
+                "latest_only": self.latest_only_var,
+                "navigation_only": self.navigation_only_var,
+                "skip_navigation": self.skip_navigation_var,
+                "skip_folder_dialog": self.skip_folder_dialog_var,
+                "return_home": self.return_home_var,
+            }
+            for key, variable in bool_vars.items():
+                if key in options:
+                    variable.set(bool(options[key]))
+
+            for target_name, value in coordinates.items():
+                if target_name not in self.coordinate_vars or not isinstance(value, dict):
+                    continue
+                x_value = value.get("x")
+                y_value = value.get("y")
+                if x_value is None or y_value is None:
+                    continue
+                x_var, y_var = self.coordinate_vars[target_name]
+                x_var.set(str(x_value))
+                y_var.set(str(y_value))
+
+            for target_name, value in confirmed_coordinates.items():
+                if target_name not in self.confirmed_coordinates or not isinstance(value, dict):
+                    continue
+                try:
+                    self.confirmed_coordinates[target_name] = (int(value["x"]), int(value["y"]))
+                except Exception:
+                    continue
+        except Exception as exc:
+            self._write_gui_error(exc)
+        finally:
+            self._settings_loading = False
+
+    def _build_settings_payload(self) -> dict:
+        coordinates: dict[str, dict[str, str]] = {}
+        for target_name, (x_var, y_var) in self.coordinate_vars.items():
+            coordinates[target_name] = {
+                "x": x_var.get().strip(),
+                "y": y_var.get().strip(),
+            }
+
+        confirmed_coordinates = {
+            target_name: {"x": point[0], "y": point[1]}
+            for target_name, point in self.confirmed_coordinates.items()
+        }
+
+        return {
+            "version": 1,
+            "fields": {
+                "excel_path": self.excel_path_var.get().strip(),
+                "choice_exe": self.choice_exe_var.get().strip(),
+                "output_dir": self.output_dir_var.get().strip(),
+                "log_dir": self.log_dir_var.get().strip(),
+                "batch_count": self.batch_count_var.get().strip(),
+                "max_batch_count": self.max_batch_count_var.get().strip(),
+                "range_start": self.range_start_var.get().strip(),
+                "range_end": self.range_end_var.get().strip(),
+                "filename_keywords": self.filename_keywords_var.get().strip(),
+                "keyword_match_mode": self.keyword_match_mode_var.get().strip(),
+                "start_wait": self.start_wait_var.get().strip(),
+                "enter_wait": self.enter_wait_var.get().strip(),
+                "post_f9_wait": self.post_f9_wait_var.get().strip(),
+                "calibration_target": self.calibration_target_var.get().strip(),
+            },
+            "options": {
+                "latest_only": self.latest_only_var.get(),
+                "navigation_only": self.navigation_only_var.get(),
+                "skip_navigation": self.skip_navigation_var.get(),
+                "skip_folder_dialog": self.skip_folder_dialog_var.get(),
+                "return_home": self.return_home_var.get(),
+            },
+            "coordinates": coordinates,
+            "confirmed_coordinates": confirmed_coordinates,
+        }
 
     def _save_settings(self):
-        return
+        if getattr(self, "_settings_loading", False):
+            return
+        try:
+            SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SETTINGS_PATH.write_text(
+                json.dumps(self._build_settings_payload(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self._write_gui_error(exc)
 
     def _clear_runtime_cache(self):
         try:
-            if SETTINGS_PATH.exists():
-                SETTINGS_PATH.unlink()
-                self._append_log("[GUI] 已清理本地缓存设置\n")
-        except Exception as exc:
-            self._append_log(f"[GUI] 清理本地缓存设置失败: {exc}\n")
+            self._save_settings()
+        except Exception:
+            pass
 
     def on_close(self):
         if self.is_running or self.is_calibrating:

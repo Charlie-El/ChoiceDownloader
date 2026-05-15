@@ -2,6 +2,8 @@
 downloads/
 logs/
 choice_automation_gui_settings.json
+settings.json
+ChoiceDownloader/
 choice_batch_summary.xlsx
 
 # PyInstaller
@@ -18,6 +20,8 @@ venv/
 
 # Local files
 *.log
+*.jsonl
+*.tmp
 ~$*.xlsx
 ~$*.xlsm
 

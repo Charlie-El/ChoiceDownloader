@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pywinauto import Application, Desktop
 from pywinauto.keyboard import send_keys
-from pywinauto.mouse import move, scroll
+from pywinauto.mouse import click, move, scroll
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -373,7 +373,7 @@ def click_window_relative_point(window, point: tuple[int, int], step_name: str, 
     check_stop(stop_event)
     window.set_focus()
     controlled_sleep(0.3, stop_event)
-    window.click_input(coords=point)
+    click(button="left", coords=(x, y))
     logging.info("clicked %s at relative=%s absolute=(%s, %s)", step_name, point, x, y)
 
 
@@ -803,21 +803,23 @@ def copy_latest_file_to_latest_folder(
     latest_only: bool = True,
 ) -> list[Path]:
     download_folder = get_download_folder(downloaded_paths)
-    latest_dir = download_folder / "最新"
-    latest_dir.mkdir(exist_ok=True)
     matched_paths = [
         path for path in downloaded_paths if filename_matches_keywords(path, filename_keywords or [], keyword_match_mode)
     ]
+    latest_dir = download_folder / "最新"
     if not matched_paths:
+        if latest_dir.exists():
+            shutil.rmtree(latest_dir)
+            logging.info("removed stale latest dir because no matching files were found: %s", latest_dir)
         if filename_keywords:
             raise LatestFilterError(
                 f"没筛选成功：下载文件中没有匹配关键词 {filename_keywords}，匹配方式={normalize_keyword_match_mode(keyword_match_mode)}。"
             )
         raise LatestFilterError("没筛选成功：没有可复制到“最新”文件夹的下载文件。")
 
-    for existing_path in latest_dir.iterdir():
-        if existing_path.is_file():
-            existing_path.unlink()
+    if latest_dir.exists():
+        shutil.rmtree(latest_dir)
+    latest_dir.mkdir(exist_ok=True)
 
     sorted_paths = sorted(
         matched_paths,
@@ -993,7 +995,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--keep-all-matches",
         action="store_true",
-        help="Keep all keyword-matching files instead of only the newest dated file.",
+        help="Skip latest-folder post-processing and keep Choice's original downloaded files only.",
     )
     parser.add_argument(
         "--coordinate",
@@ -1127,12 +1129,15 @@ def run_with_args(args, extra_log_handlers: list[logging.Handler] | None = None,
             )
 
         downloaded_paths = wait_for_batch_files(base_dir, before_paths, args.batch_count, stop_event=stop_event)
-        copy_latest_file_to_latest_folder(
-            downloaded_paths,
-            filename_keywords=parse_filename_keywords(args.filename_keywords),
-            keyword_match_mode=args.keyword_match_mode,
-            latest_only=not args.keep_all_matches,
-        )
+        if args.keep_all_matches:
+            logging.info("skipped latest-folder post-processing; keeping original downloaded files only")
+        else:
+            copy_latest_file_to_latest_folder(
+                downloaded_paths,
+                filename_keywords=parse_filename_keywords(args.filename_keywords),
+                keyword_match_mode=args.keyword_match_mode,
+                latest_only=True,
+            )
 
         if args.show_return_home_target:
             move_mouse_to_window_relative_point(
